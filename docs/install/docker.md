@@ -38,6 +38,12 @@ From repo root:
 ./docker-setup.sh
 ```
 
+For repeatable non-interactive rebuilds with post-start verification gates:
+
+```bash
+make rebuild
+```
+
 This script:
 
 - builds the gateway image
@@ -49,6 +55,23 @@ This script:
 Optional env vars:
 
 - `OPENCLAW_DOCKER_APT_PACKAGES` — install extra apt packages during build
+- `OPENCLAW_PREBUILD_NODE_LLAMA` — set to `1` to prebuild `node-llama-cpp` during image build (slower build, faster first local-memory use)
+- `OPENCLAW_INSTALL_CLAUDE` — set to `1` to install Claude Code CLI (`claude`) in the image
+- `OPENCLAW_CLAUDE_NPM_PACKAGE` — npm package for Claude CLI install (default `@anthropic-ai/claude-code`)
+- `OPENCLAW_INSTALL_GEMINI` — set to `1` to install Gemini CLI (`gemini`) in the image
+- `OPENCLAW_GEMINI_NPM_PACKAGE` — npm package for Gemini CLI install (default `@google/gemini-cli`)
+- `OPENCLAW_DOCKER_NPM_GLOBAL_PACKAGES` — space-separated npm global packages to install during image build (persistent across recreates)
+- `OPENCLAW_DOCKER_GO_PACKAGES` — space-separated `go install` package specs to install into `/usr/local/bin`
+- `OPENCLAW_INSTALL_WHISPER` — set to `1` to install local Whisper CLI (`whisper`) via pip + ffmpeg
+- `OPENCLAW_INSTALL_UV` — set to `1` to install `uv` in the image (required by some bundled plugins)
+- `OPENCLAW_INSTALL_GOG` — set to `1` to install `gog` in the image
+- `OPENCLAW_GOG_DOWNLOAD_URL` — optional override URL for `gog` tarball (auto-selects by architecture by default)
+- `OPENCLAW_INSTALL_BREW` — set to `1` to install Linuxbrew (`brew`) in the image
+- `OPENCLAW_BREW_TAPS` — space-separated brew taps to add at build time
+- `OPENCLAW_BREW_FORMULAS` — space-separated brew formulas/casks to install at build time
+- `OPENCLAW_SKIP_ONBOARD` — set to `1` to skip interactive onboarding during scripted rebuilds
+- `OPENCLAW_REQUIRED_BINS` — comma-separated binaries that must exist after startup
+- `OPENCLAW_REQUIRED_SKILLS` — comma-separated skills that must be eligible after startup
 - `OPENCLAW_EXTRA_MOUNTS` — add extra host bind mounts
 - `OPENCLAW_HOME_VOLUME` — persist `/home/node` in a named volume
 
@@ -182,6 +205,96 @@ Notes:
 - If you change `OPENCLAW_DOCKER_APT_PACKAGES`, rerun `docker-setup.sh` to rebuild
   the image.
 
+### Install extra npm global CLIs (optional)
+
+If you need CLI tools that are distributed via npm (for example Gemini CLI),
+set `OPENCLAW_DOCKER_NPM_GLOBAL_PACKAGES` before running `docker-setup.sh`.
+These are installed at image build time and persist across container recreation.
+
+Example:
+
+```bash
+export OPENCLAW_GEMINI_NPM_PACKAGE="@google/gemini-cli@0.28.2"
+export OPENCLAW_DOCKER_NPM_GLOBAL_PACKAGES="mcporter@0.7.3"
+./docker-setup.sh
+```
+
+Notes:
+
+- This accepts a space-separated list of npm package specs.
+- Pin versions (`@x.y.z`) to avoid silent updates from `latest`.
+- If you change `OPENCLAW_DOCKER_NPM_GLOBAL_PACKAGES`, rerun `docker-setup.sh`
+  to rebuild the image.
+- Works on amd64 and arm64 when the selected npm package supports your
+  architecture.
+
+### Install Go CLIs at build time (optional)
+
+If you need Go-based tools in the image, set `OPENCLAW_DOCKER_GO_PACKAGES`:
+
+```bash
+export OPENCLAW_DOCKER_GO_PACKAGES="github.com/Hyaxia/blogwatcher/cmd/blogwatcher@latest"
+./docker-setup.sh
+```
+
+### Install local Whisper CLI (optional)
+
+For local speech-to-text (`openai-whisper` skill), enable:
+
+```bash
+export OPENCLAW_INSTALL_WHISPER=1
+./docker-setup.sh
+```
+
+This installs `whisper` (pip) and `ffmpeg` in the image.
+
+### Install claude, gog, uv, and brew in Docker (optional)
+
+To include these CLIs in the container and keep them executable by `USER node`:
+
+```bash
+export OPENCLAW_INSTALL_CLAUDE=1
+export OPENCLAW_CLAUDE_NPM_PACKAGE="@anthropic-ai/claude-code@2.1.42"
+export OPENCLAW_INSTALL_GOG=1
+export OPENCLAW_INSTALL_UV=1
+export OPENCLAW_INSTALL_BREW=1
+./docker-setup.sh
+```
+
+Notes:
+
+- `claude` is installed via npm (`@anthropic-ai/claude-code` by default). Override with
+  `OPENCLAW_CLAUDE_NPM_PACKAGE` if needed.
+- `uv` is installed via Astral installer and linked to `/usr/local/bin/uv`.
+- `gog` defaults to `gog_Linux_x86_64.tar.gz` or `gog_Linux_arm64.tar.gz` based on
+  image architecture. Override with `OPENCLAW_GOG_DOWNLOAD_URL` for custom mirrors.
+- Enabling all four increases build time and image size.
+
+You can also install additional brew formulas during image build:
+
+```bash
+export OPENCLAW_INSTALL_BREW=1
+export OPENCLAW_BREW_TAPS="steipete/tap yakitrak/yakitrak"
+export OPENCLAW_BREW_FORMULAS="steipete/tap/summarize yakitrak/yakitrak/obsidian-cli"
+./docker-setup.sh
+```
+
+### Prebuild local embeddings runtime (optional)
+
+On some ARM hosts, `node-llama-cpp` may compile bindings on first local-memory
+query. If you want that work done at image build time instead, set:
+
+```bash
+export OPENCLAW_PREBUILD_NODE_LLAMA=1
+./docker-setup.sh
+```
+
+Notes:
+
+- Build time increases (may be several minutes on ARM).
+- First `memorySearch.provider = "local"` query starts faster and avoids on-demand
+  compile.
+
 ### Power-user / full-featured container (opt-in)
 
 The default Docker image is **security-first** and runs as the non-root `node`
@@ -246,8 +359,11 @@ This avoids re-running `pnpm install` unless lockfiles change:
 FROM node:22-bookworm
 
 # Install Bun (required for build scripts)
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+ARG BUN_INSTALL_DIR=/opt/bun
+ENV BUN_INSTALL=${BUN_INSTALL_DIR}
+ENV PATH="${BUN_INSTALL_DIR}/bin:${PATH}"
+RUN curl -fsSL https://bun.sh/install | bash \
+  && ln -sf "${BUN_INSTALL_DIR}/bin/bun" /usr/local/bin/bun
 
 RUN corepack enable
 

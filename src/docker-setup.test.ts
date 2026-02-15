@@ -110,7 +110,7 @@ describe("docker-setup.sh", () => {
     sandbox = null;
   });
 
-  it("handles env defaults, home-volume mounts, and apt build args", async () => {
+  it("handles env defaults, home-volume mounts, and docker build args", async () => {
     if (!sandbox) {
       throw new Error("sandbox missing");
     }
@@ -127,6 +127,12 @@ describe("docker-setup.sh", () => {
     expect(result.status).toBe(0);
     const envFile = await readFile(join(sandbox.rootDir, ".env"), "utf8");
     expect(envFile).toContain("OPENCLAW_DOCKER_APT_PACKAGES=ffmpeg build-essential");
+    expect(envFile).toContain("OPENCLAW_PREBUILD_NODE_LLAMA=0");
+    expect(envFile).toContain("OPENCLAW_INSTALL_CLAUDE=0");
+    expect(envFile).toContain("OPENCLAW_CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code");
+    expect(envFile).toContain("OPENCLAW_INSTALL_GOG=0");
+    expect(envFile).toContain("OPENCLAW_GOG_DOWNLOAD_URL=");
+    expect(envFile).toContain("OPENCLAW_INSTALL_BREW=0");
     expect(envFile).toContain("OPENCLAW_EXTRA_MOUNTS=");
     expect(envFile).toContain("OPENCLAW_HOME_VOLUME=openclaw-home");
     const extraCompose = await readFile(join(sandbox.rootDir, "docker-compose.extra.yml"), "utf8");
@@ -135,6 +141,12 @@ describe("docker-setup.sh", () => {
     expect(extraCompose).toContain("openclaw-home:");
     const log = await readFile(sandbox.logPath, "utf8");
     expect(log).toContain("--build-arg OPENCLAW_DOCKER_APT_PACKAGES=ffmpeg build-essential");
+    expect(log).toContain("--build-arg OPENCLAW_PREBUILD_NODE_LLAMA=0");
+    expect(log).toContain("--build-arg OPENCLAW_INSTALL_CLAUDE=0");
+    expect(log).toContain("--build-arg OPENCLAW_CLAUDE_NPM_PACKAGE=@anthropic-ai/claude-code");
+    expect(log).toContain("--build-arg OPENCLAW_INSTALL_GOG=0");
+    expect(log).toContain("--build-arg OPENCLAW_GOG_DOWNLOAD_URL=");
+    expect(log).toContain("--build-arg OPENCLAW_INSTALL_BREW=0");
   });
 
   it("avoids associative arrays so the script remains Bash 3.2-compatible", async () => {
